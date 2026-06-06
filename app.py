@@ -70,31 +70,49 @@ def ejecutar_lector_optico(archivo):
     valor_detectado = 0; ref_detectada = "Lectura IA"
     
     if texto_completo:
+        # Limpieza inicial para leer de corrido
         texto_clean = texto_completo.lower().replace('\n', ' ').replace('\r', ' ')
         
-        # Extracción de Valor Monetario
-        valores = re.findall(r'\$\s*([\d\.,]+)', texto_clean)
-        if valores:
-            raw_val = valores[0]
-            raw_val = re.sub(r'[,.]\d{2}$', '', raw_val)
-            num_clean = raw_val.replace(".", "").replace(",", "")
-            if num_clean.isdigit(): valor_detectado = int(num_clean)
-            
-        # Extracción de Referencia
-        match_ref = re.search(r'n[uú]mero de referencia\s*([a-z0-9]{5,20})', texto_clean)
+        # --- 1. NUEVA EXTRACCIÓN DE VALOR MONETARIO ---
+        # Buscamos combinaciones como "valor $85.000", "valor 85.000", o simplemente "$ 85.000"
+        patrones_valor = [
+            r'(?:valor|monto|total|transferido)\s*[:\$]*\s*([\d\.,]{4,15})', 
+            r'\$\s*([\d\.,]{4,15})'
+        ]
+        
+        for patron in patrones_valor:
+            match = re.search(patron, texto_clean)
+            if match:
+                raw_val = match.group(1)
+                # Elimina los ,00 o .00 finales (céntimos de Bancolombia/Nequi)
+                raw_val = re.sub(r'[,.]\d{2}$', '', raw_val)
+                num_clean = raw_val.replace(".", "").replace(",", "")
+                
+                if num_clean.isdigit(): 
+                    valor_posible = int(num_clean)
+                    # Filtro lógico: Evitar capturar años (ej. 2026) como un pago.
+                    if valor_posible > 1000:
+                        valor_detectado = valor_posible
+                        break # Si encontró un valor válido, sale del ciclo
+                        
+        # --- 2. NUEVA EXTRACCIÓN DE REFERENCIA ---
+        # Ajustado para incluir "comprobante" (muy común en Bancolombia)
+        match_ref = re.search(r'n[uú]mero de (?:referencia|comprobante)\s*([a-z0-9]{5,20})', texto_clean)
+        
         if match_ref:
             ref_detectada = match_ref.group(1).upper()
         else:
-            match_otras = re.search(r'(?:referencia|ref\.|aprobaci[óo]n|autorizaci[óo]n).{0,15}?([a-z0-9]{5,20})', texto_clean)
-            if match_otras and match_otras.group(1) != "movimiento":
+            # Búsqueda secundaria más amplia
+            match_otras = re.search(r'(?:referencia|ref\.|aprobaci[óo]n|autorizaci[óo]n|comprobante).{0,15}?([a-z0-9]{5,20})', texto_clean)
+            if match_otras and match_otras.group(1) not in ["movimiento", "transferencia", "bancolombia"]:
                  ref_detectada = match_otras.group(1).upper()
             else:
+                 # Patrón Nequi por defecto
                  match_nequi = re.search(r'\b(m\d{5,10})\b', texto_clean)
                  if match_nequi:
                      ref_detectada = match_nequi.group(1).upper()
                      
     return valor_detectado, ref_detectada
-
 # --- INTERFAZ DE CARGA ---
 
 col1, col2 = st.columns(2)
