@@ -60,9 +60,9 @@ if logo_completo is not None:
     with col_logo:
         st.image(logo_completo, width=60)
     with col_titulo:
-        st.markdown("<h1 style='text-align: left !important; margin-top: -10px;'>🪄 Portal de Cargue Masivo</h1>", unsafe_allow_html=True)
+        st.markdown("<h1 style='text-align: left !important; margin-top: -10px;'>Portal de Cargue Masivo</h1>", unsafe_allow_html=True)
 else:
-    st.markdown("<h1 style='text-align: center !important;'>🪄 Portal de Cargue Masivo</h1>", unsafe_allow_html=True)
+    st.markdown("<h1 style='text-align: center !important;'>Portal de Cargue Masivo</h1>", unsafe_allow_html=True)
 
 st.subheader("Análisis óptico, validación de contratos y consolidación de reportes")
 
