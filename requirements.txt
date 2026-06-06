@@ -1,0 +1,6 @@
+streamlit
+pandas
+openpyxl
+cloudinary
+st-gsheets-connection
+google-generativeai  # O la librería de OCR/IA que prefieras usar
