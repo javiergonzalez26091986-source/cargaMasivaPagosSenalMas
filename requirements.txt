@@ -1,6 +1,5 @@
 streamlit
 pandas
 openpyxl
-cloudinary
-google-generativeai
-Pillow
+requests
+pypdf
