@@ -14,7 +14,6 @@ CLOUDINARY_PRESET = "conexion_pagos_preset1"
 OCR_SPACE_API_KEY = "helloworld" 
 
 # --- CARGAR IMÁGENES (LOGO E ÍCONO) ---
-# IMPORTANTE: Revisa que estos nombres sean EXACTAMENTE iguales a los de tus archivos.
 ruta_logo = 'logoSenalMas.jpeg'
 ruta_icono = 'logoSenalMas.ico'
 
@@ -35,17 +34,39 @@ except Exception:
 # --- INICIALIZACIÓN Y ESTILOS ---
 st.set_page_config(page_title="Señal Más | Cargue Masivo", page_icon=isotipo, layout="wide")
 
-# ... (Aquí van tus estilos CSS) ...
+st.markdown("""
+    <style>
+        #MainMenu {visibility: hidden;} footer {visibility: hidden;} header {visibility: hidden;}
+        .stAppDeployButton {display:none;} div[data-testid="stToolbar"] { visibility: hidden !important; }
+        .main { background-color: #00233c; } .block-container { padding-top: 1.5rem; padding-bottom: 2rem; }
+        h1, h3 { text-align: center !important; }
+        h1 { color: #ffffff; font-size: 2.2rem; margin-top: 0; font-weight: 700; }
+        h3 { color: #b0c4de; font-size: 1.1rem; font-weight: 400; margin-bottom: 2.5rem; }
+        p, .stMarkdown p { color: #ffffff; }
+        .stTextInput > div > div > input { background-color: #ffffff; color: #00233c; border-radius: 8px; border: 2px solid #00a896; }
+        div[data-testid="stFormSubmitButton"] button, .stButton button {
+            background-color: #00a896 !important; color: #ffffff !important; border-radius: 8px !important;
+            font-weight: 700 !important; border: none !important; box-shadow: 0 4px 10px rgba(0,168,150,0.3) !important;
+        }
+        .stButton button:hover { background-color: #02c3b1 !important; box-shadow: 0 6px 15px rgba(2,195,177,0.5) !important; }
+        .stDataFrame {background-color: white;}
+    </style>
+    """, unsafe_allow_html=True)
 
-# --- MOSTRAR EL LOGO EN LA PÁGINA ---
+# --- ENCABEZADO CON LOGO ALINEADO ---
 if logo_completo is not None:
-    col_logo1, col_logo2, col_logo3 = st.columns([1, 2, 1])
-    with col_logo2:
-        st.image(logo_completo, use_column_width=True)
+    # Columnas asimétricas para que el logo quede pequeño a la izquierda del título
+    col_logo, col_titulo = st.columns([1, 15]) 
+    with col_logo:
+        st.image(logo_completo, width=60)
+    with col_titulo:
+        st.markdown("<h1 style='text-align: left !important; margin-top: -10px;'>🪄 Portal de Cargue Masivo</h1>", unsafe_allow_html=True)
+else:
+    st.markdown("<h1 style='text-align: center !important;'>🪄 Portal de Cargue Masivo</h1>", unsafe_allow_html=True)
 
-st.title("🪄 Portal de Cargue Masivo")
 st.subheader("Análisis óptico, validación de contratos y consolidación de reportes")
-# --- FUNCIONES NÚCLEO (Las tuyas, adaptadas para el bucle) ---
+
+# --- FUNCIONES NÚCLEO ---
 
 def subir_a_cloudinary(archivo_subido):
     url_api = f"https://api.cloudinary.com/v1_1/{CLOUDINARY_CLOUD_NAME}/auto/upload"
@@ -59,6 +80,8 @@ def subir_a_cloudinary(archivo_subido):
 
 def ejecutar_lector_optico(archivo):
     texto_completo = ""
+    
+    # 1. Intentar leer si es PDF
     if archivo.type == "application/pdf":
         try:
             import pypdf
@@ -66,62 +89,79 @@ def ejecutar_lector_optico(archivo):
             for page in reader.pages: texto_completo += page.extract_text() or ""
         except Exception: pass
             
+    # 2. Si está vacío (es JPG, JPEG, PNG o falló el PDF), usar OCR.space
     if not texto_completo.strip():
         try:
             url_ocr = "https://api.ocr.space/parse/image"
-            payload = {"apikey": OCR_SPACE_API_KEY, "language": "spa", "isOverlayRequired": False}
+            # PARÁMETROS MEJORADOS PARA JPEG Y RECIBOS
+            payload = {
+                "apikey": OCR_SPACE_API_KEY, 
+                "language": "spa", 
+                "isOverlayRequired": False,
+                "OCREngine": "2",  # Motor 2: Especializado en números y recibos
+                "scale": "true"    # Escala y mejora la calidad antes de leer
+            }
             files = {"file": (archivo.name, archivo.getvalue(), archivo.type)}
-            res = requests.post(url_ocr, data=payload, files=files, timeout=15)
+            res = requests.post(url_ocr, data=payload, files=files, timeout=20)
+            
             if res.status_code == 200 and not res.json().get("IsErroredOnProcessing"):
-                texto_completo = res.json()["ParsedResults"][0]["ParsedText"]
+                resultados = res.json().get("ParsedResults", [])
+                if resultados:
+                    texto_completo = resultados[0].get("ParsedText", "")
         except Exception: pass
             
-    valor_detectado = 0; ref_detectada = "Lectura IA"
+    valor_detectado = 0
+    ref_detectada = "Lectura IA"
     
+    # 3. Lógica de extracción de datos
     if texto_completo:
-        # Limpieza inicial para leer de corrido
         texto_clean = texto_completo.lower().replace('\n', ' ').replace('\r', ' ')
+        texto_clean = re.sub(r'\s+', ' ', texto_clean)
         
-        # --- 1. NUEVA EXTRACCIÓN DE VALOR MONETARIO ---
-        # Buscamos combinaciones como "valor $85.000", "valor 85.000", o simplemente "$ 85.000"
+        # --- EXTRACCIÓN DE VALOR MONETARIO ---
         patrones_valor = [
-            r'(?:valor|monto|total|transferido)\s*[:\$]*\s*([\d\.,]{4,15})', 
-            r'\$\s*([\d\.,]{4,15})'
+            r'(?:valor|monto|total|efectivo|pagar)\s*[:\$]*\s*([\d\.,]{4,15})', 
+            r'[\$s5]\s*([\d\.,]{4,15})' 
         ]
         
         for patron in patrones_valor:
             match = re.search(patron, texto_clean)
             if match:
                 raw_val = match.group(1)
-                # Elimina los ,00 o .00 finales (céntimos de Bancolombia/Nequi)
                 raw_val = re.sub(r'[,.]\d{2}$', '', raw_val)
                 num_clean = raw_val.replace(".", "").replace(",", "")
-                
                 if num_clean.isdigit(): 
-                    valor_posible = int(num_clean)
-                    # Filtro lógico: Evitar capturar años (ej. 2026) como un pago.
-                    if valor_posible > 1000:
-                        valor_detectado = valor_posible
-                        break # Si encontró un valor válido, sale del ciclo
-                        
-        # --- 2. NUEVA EXTRACCIÓN DE REFERENCIA ---
-        # Ajustado para incluir "comprobante" (muy común en Bancolombia)
-        match_ref = re.search(r'n[uú]mero de (?:referencia|comprobante)\s*([a-z0-9]{5,20})', texto_clean)
+                    v = int(num_clean)
+                    if 10000 <= v <= 500000:
+                        valor_detectado = v
+                        break
         
+        # Red de seguridad: buscar cualquier número cerrado (ej. 85000) suelto
+        if valor_detectado == 0:
+            posibles_numeros = re.findall(r'\b\d{2,3}[\.,]?\d{3}\b', texto_clean)
+            for pv in posibles_numeros:
+                num_clean = pv.replace(".", "").replace(",", "")
+                if num_clean.isdigit():
+                    v = int(num_clean)
+                    if 10000 <= v <= 500000 and v % 1000 == 0:
+                        valor_detectado = v
+                        break 
+
+        # --- EXTRACCIÓN DE REFERENCIA ---
+        match_ref = re.search(r'n[uú]mero de (?:referencia|comprobante)\s*([a-z0-9]{5,20})', texto_clean)
         if match_ref:
             ref_detectada = match_ref.group(1).upper()
         else:
-            # Búsqueda secundaria más amplia
             match_otras = re.search(r'(?:referencia|ref\.|aprobaci[óo]n|autorizaci[óo]n|comprobante).{0,15}?([a-z0-9]{5,20})', texto_clean)
             if match_otras and match_otras.group(1) not in ["movimiento", "transferencia", "bancolombia"]:
                  ref_detectada = match_otras.group(1).upper()
             else:
-                 # Patrón Nequi por defecto
                  match_nequi = re.search(r'\b(m\d{5,10})\b', texto_clean)
                  if match_nequi:
                      ref_detectada = match_nequi.group(1).upper()
                      
     return valor_detectado, ref_detectada
+
 # --- INTERFAZ DE CARGA ---
 
 col1, col2 = st.columns(2)
