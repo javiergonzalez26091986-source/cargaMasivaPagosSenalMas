@@ -24,6 +24,13 @@ if "df_preview" not in st.session_state:
 if "lote_fecha" not in st.session_state:
     st.session_state.lote_fecha = ""
 
+# --- FUNCIÓN DE LIMPIEZA POST-DESCARGA ---
+def limpiar_sesion():
+    st.session_state.file_key += 1
+    st.session_state.excel_data = None
+    st.session_state.df_preview = None
+    st.session_state.lote_fecha = ""
+
 # --- CARGAR IMÁGENES (LOGO E ÍCONO) ---
 ruta_logo = 'logoSenalMas.jpeg'
 ruta_icono = 'logoSenalMas.ico'
@@ -68,16 +75,16 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# --- ENCABEZADO CON LOGO PEGADO AL TÍTULO (HTML FLEXBOX) ---
+# --- ENCABEZADO CON LOGO Y TÍTULO CENTRADOS ---
 if logo_b64:
     st.markdown(f"""
-        <div style="display: flex; align-items: center; justify-content: flex-start; gap: 12px; margin-bottom: 5px;">
-            <img src="data:image/jpeg;base64,{logo_b64}" style="height: 50px; border-radius: 8px;">
-            <h1 style="margin: 0; padding: 0; text-align: left !important;">Portal de Cargue Masivo</h1>
+        <div style="display: flex; align-items: center; justify-content: center; gap: 15px; margin-bottom: 5px;">
+            <img src="data:image/jpeg;base64,{logo_b64}" style="height: 55px; border-radius: 8px;">
+            <h1 style="margin: 0; padding: 0; text-align: center !important;">🪄 Portal de Cargue Masivo</h1>
         </div>
         """, unsafe_allow_html=True)
 else:
-    st.markdown("<h1 style='text-align: center !important;'>Portal de Cargue Masivo</h1>", unsafe_allow_html=True)
+    st.markdown("<h1 style='text-align: center !important;'>🪄 Portal de Cargue Masivo</h1>", unsafe_allow_html=True)
 
 st.subheader("Análisis óptico, validación de contratos y consolidación de reportes")
 
@@ -181,8 +188,6 @@ def ejecutar_lector_optico(archivo):
     return valor_detectado, ref_detectada
 
 # --- INTERFAZ DE CARGA DINÁMICA ---
-# Al usar el st.session_state.file_key, los campos se vacían solos cuando este número cambia.
-
 col1, col2 = st.columns(2)
 with col1:
     archivo_bd = st.file_uploader("1. Sube la Base de Datos (Excel o CSV)", type=['xlsx', 'csv'], key=f"bd_{st.session_state.file_key}")
@@ -272,7 +277,7 @@ if archivo_bd and archivos_soportes:
             
             barra_progreso.progress((i + 1) / len(archivos_soportes))
 
-        # 4. Guardar datos en Memoria y Limpiar Caché Visual
+        # 4. Guardar datos en Memoria y preparar la vista (Ya no se limpia aquí automáticamente)
         df_resultado = pd.DataFrame(datos_excel)
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
@@ -283,31 +288,27 @@ if archivo_bd and archivos_soportes:
         st.session_state.df_preview = df_resultado
         st.session_state.lote_fecha = datetime.now().strftime('%d%m%Y')
         
-        # ¡Magia! Aumentamos la llave para que los cargadores de archivos se vacíen
-        st.session_state.file_key += 1
-        st.rerun()
+        texto_progreso.markdown("<p style='text-align:center; color:#00a896; font-weight:bold;'>✅ Procesamiento Óptico y Subida Completados.</p>", unsafe_allow_html=True)
 
-# --- MOSTRAR RESULTADOS Y BOTÓN DE DESCARGA ---
+# --- MOSTRAR RESULTADOS Y BOTONES DE ACCIÓN ---
 if st.session_state.excel_data is not None:
-    st.success("✅ Procesamiento Óptico y Subida Completados.")
     st.markdown("<br><h3 style='text-align:left !important;'>Vista Previa del Consolidado</h3>", unsafe_allow_html=True)
     st.dataframe(st.session_state.df_preview, use_container_width=True)
     
-    # Dividimos los botones de acción final
     col_dl, col_reset = st.columns(2)
     with col_dl:
+        # El parámetro on_click=limpiar_sesion asegura que la limpieza se haga JUSTO después de descargar
         st.download_button(
             label="⬇️ Descargar Excel para Google Sheets",
             data=st.session_state.excel_data,
             file_name=f"Cargue_Masivo_{st.session_state.lote_fecha}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            use_container_width=True
+            use_container_width=True,
+            on_click=limpiar_sesion 
         )
     with col_reset:
-        if st.button("🔄 Ocultar Resultados", use_container_width=True):
-            # Limpia los resultados de la pantalla
-            st.session_state.excel_data = None
-            st.session_state.df_preview = None
+        if st.button("🔄 Reiniciar y Ocultar", use_container_width=True):
+            limpiar_sesion()
             st.rerun()
 
 st.markdown("---")
