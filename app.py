@@ -80,11 +80,11 @@ if logo_b64:
     st.markdown(f"""
         <div style="display: flex; align-items: center; justify-content: center; gap: 15px; margin-bottom: 5px;">
             <img src="data:image/jpeg;base64,{logo_b64}" style="height: 55px; border-radius: 8px;">
-            <h1 style="margin: 0; padding: 0; text-align: center !important;">🪄 Portal de Cargue Masivo</h1>
+            <h1 style="margin: 0; padding: 0; text-align: center !important;">Portal de Cargue Masivo</h1>
         </div>
         """, unsafe_allow_html=True)
 else:
-    st.markdown("<h1 style='text-align: center !important;'>🪄 Portal de Cargue Masivo</h1>", unsafe_allow_html=True)
+    st.markdown("<h1 style='text-align: center !important;'>Portal de Cargue Masivo</h1>", unsafe_allow_html=True)
 
 st.subheader("Análisis óptico, validación de contratos y consolidación de reportes")
 
