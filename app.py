@@ -1,130 +1,216 @@
 import streamlit as st
 import pandas as pd
-import cloudinary
-import cloudinary.uploader
-from io import BytesIO
-import datetime
-# Si usas la librería oficial de Streamlit para Sheets:
-from streamlit_gsheets import GSheetsConnection 
+import requests
+import re
+import io
+import time
+from datetime import datetime
 
-# --- 1. CONFIGURACIÓN INICIAL ---
-st.set_page_config(page_title="Señal Más - Cargue Masivo", page_icon="🪄", layout="wide")
+# --- CONFIGURACIÓN DE APIS ---
+CLOUDINARY_CLOUD_NAME = "dgdtwbmot"
+CLOUDINARY_PRESET = "conexion_pagos_preset1"
+OCR_SPACE_API_KEY = "helloworld" 
 
-# Configurar Cloudinary usando los secretos de Streamlit
-cloudinary.config(
-    cloud_name = st.secrets["CLOUDINARY_CLOUD_NAME"],
-    api_key = st.secrets["CLOUDINARY_API_KEY"],
-    api_secret = st.secrets["CLOUDINARY_API_SECRET"]
-)
+# --- INICIALIZACIÓN Y ESTILOS ---
+st.set_page_config(page_title="Señal Más | Cargue Masivo", page_icon="🪄", layout="wide")
 
-# --- 2. FUNCIONES NÚCLEO ---
+st.markdown("""
+    <style>
+        #MainMenu {visibility: hidden;} footer {visibility: hidden;} header {visibility: hidden;}
+        .stAppDeployButton {display:none;} div[data-testid="stToolbar"] { visibility: hidden !important; }
+        .main { background-color: #00233c; } .block-container { padding-top: 1.5rem; padding-bottom: 2rem; }
+        h1, h3 { text-align: center !important; }
+        h1 { color: #ffffff; font-size: 2.2rem; margin-top: 0; font-weight: 700; }
+        h3 { color: #b0c4de; font-size: 1.1rem; font-weight: 400; margin-bottom: 2.5rem; }
+        p, .stMarkdown p { color: #ffffff; }
+        .stTextInput > div > div > input { background-color: #ffffff; color: #00233c; border-radius: 8px; border: 2px solid #00a896; }
+        div[data-testid="stFormSubmitButton"] button, .stButton button {
+            background-color: #00a896 !important; color: #ffffff !important; border-radius: 8px !important;
+            font-weight: 700 !important; border: none !important; box-shadow: 0 4px 10px rgba(0,168,150,0.3) !important;
+        }
+        .stButton button:hover { background-color: #02c3b1 !important; box-shadow: 0 6px 15px rgba(2,195,177,0.5) !important; }
+        .stDataFrame {background-color: white;}
+    </style>
+    """, unsafe_allow_html=True)
 
-# Función para extraer valor con OCR (Debes adaptarla al motor que usaste en conexion-pagos-isp)
-def extraer_valor_con_ocr(imagen_bytes):
-    # AQUÍ VA TU LÓGICA DE INTELIGENCIA ARTIFICIAL / OCR
-    # Ejemplo conceptual:
-    # texto_extraido = mi_ia_ocr.analizar(imagen_bytes)
-    # valor = buscar_regex_de_dinero(texto_extraido)
-    
-    # Retorno simulado para el ejemplo:
-    return 85000 
+st.title("🪄 Portal de Cargue Masivo")
+st.subheader("Análisis óptico, validación de contratos y consolidación de reportes")
 
-@st.cache_data(ttl=600) # Caché de 10 minutos para no saturar la API de Google
-def cargar_base_datos():
-    # Conexión a Google Sheets usando st-gsheets-connection
-    conn = st.connection("gsheets", type=GSheetsConnection)
-    # Reemplaza con la URL de tu archivo y el nombre de la pestaña
-    df_bd = conn.read(spreadsheet="URL_DE_TU_GOOGLE_SHEETS", worksheet="baseDeDatos")
-    return df_bd
+# --- FUNCIONES NÚCLEO (Las tuyas, adaptadas para el bucle) ---
 
-# --- 3. INTERFAZ DE USUARIO ---
-st.title("🪄 Señal Más - Cargue Masivo de Soportes")
-st.write("Sube los soportes de pago. El sistema analizará las imágenes, cruzará los contratos y generará un archivo Excel listo para copiar y pegar en Google Sheets.")
+def subir_a_cloudinary(archivo_subido):
+    url_api = f"https://api.cloudinary.com/v1_1/{CLOUDINARY_CLOUD_NAME}/auto/upload"
+    payload = {"upload_preset": CLOUDINARY_PRESET}
+    files = {"file": (archivo_subido.name, archivo_subido.getvalue(), archivo_subido.type)}
+    try:
+        response = requests.post(url_api, data=payload, files=files)
+        return response.json().get("secure_url") if response.status_code == 200 else "Error de subida"
+    except Exception:
+        return "Error de subida"
 
-archivos_subidos = st.file_uploader("Selecciona los soportes (imágenes)", type=['png', 'jpg', 'jpeg'], accept_multiple_files=True)
-
-if archivos_subidos:
-    if st.button("🚀 Procesar Soportes", type="primary"):
-        
-        # Cargar base de datos
-        with st.spinner("Cargando base de datos de clientes..."):
-            df_bd = cargar_base_datos()
+def ejecutar_lector_optico(archivo):
+    texto_completo = ""
+    if archivo.type == "application/pdf":
+        try:
+            import pypdf
+            reader = pypdf.PdfReader(archivo)
+            for page in reader.pages: texto_completo += page.extract_text() or ""
+        except Exception: pass
             
+    if not texto_completo.strip():
+        try:
+            url_ocr = "https://api.ocr.space/parse/image"
+            payload = {"apikey": OCR_SPACE_API_KEY, "language": "spa", "isOverlayRequired": False}
+            files = {"file": (archivo.name, archivo.getvalue(), archivo.type)}
+            res = requests.post(url_ocr, data=payload, files=files, timeout=15)
+            if res.status_code == 200 and not res.json().get("IsErroredOnProcessing"):
+                texto_completo = res.json()["ParsedResults"][0]["ParsedText"]
+        except Exception: pass
+            
+    valor_detectado = 0; ref_detectada = "Lectura IA"
+    
+    if texto_completo:
+        texto_clean = texto_completo.lower().replace('\n', ' ').replace('\r', ' ')
+        
+        # Extracción de Valor Monetario
+        valores = re.findall(r'\$\s*([\d\.,]+)', texto_clean)
+        if valores:
+            raw_val = valores[0]
+            raw_val = re.sub(r'[,.]\d{2}$', '', raw_val)
+            num_clean = raw_val.replace(".", "").replace(",", "")
+            if num_clean.isdigit(): valor_detectado = int(num_clean)
+            
+        # Extracción de Referencia
+        match_ref = re.search(r'n[uú]mero de referencia\s*([a-z0-9]{5,20})', texto_clean)
+        if match_ref:
+            ref_detectada = match_ref.group(1).upper()
+        else:
+            match_otras = re.search(r'(?:referencia|ref\.|aprobaci[óo]n|autorizaci[óo]n).{0,15}?([a-z0-9]{5,20})', texto_clean)
+            if match_otras and match_otras.group(1) != "movimiento":
+                 ref_detectada = match_otras.group(1).upper()
+            else:
+                 match_nequi = re.search(r'\b(m\d{5,10})\b', texto_clean)
+                 if match_nequi:
+                     ref_detectada = match_nequi.group(1).upper()
+                     
+    return valor_detectado, ref_detectada
+
+# --- INTERFAZ DE CARGA ---
+
+col1, col2 = st.columns(2)
+with col1:
+    archivo_bd = st.file_uploader("1. Sube la Base de Datos (Excel o CSV)", type=['xlsx', 'csv'])
+with col2:
+    archivos_soportes = st.file_uploader("2. Sube los Soportes de Pago", type=['png', 'jpg', 'jpeg', 'pdf'], accept_multiple_files=True)
+
+if archivo_bd and archivos_soportes:
+    if st.button("🚀 Procesar Lote Completo", use_container_width=True):
+        
+        # 1. Cargar y limpiar la base de datos local
+        try:
+            if archivo_bd.name.endswith('.csv'):
+                df_bd = pd.read_csv(archivo_bd)
+            else:
+                df_bd = pd.read_excel(archivo_bd)
+            df_bd['CODIGO'] = df_bd['CODIGO'].astype(str).str.strip().str.replace('.0', '', regex=False)
+        except Exception as e:
+            st.error(f"Error al leer la base de datos: {e}")
+            st.stop()
+
+        # 2. Conteo de archivos para la asignación de contratos
+        conteo_archivos = {}
+        for archivo in archivos_soportes:
+            partes = archivo.name.split('-')
+            if len(partes) > 0:
+                cedula = partes[0].strip()
+                conteo_archivos[cedula] = conteo_archivos.get(cedula, 0) + 1
+
+        contratos_disponibles = {}
+        for cedula in conteo_archivos.keys():
+            filas_cliente = df_bd[df_bd['CODIGO'] == cedula]
+            if not filas_cliente.empty:
+                contratos_disponibles[cedula] = filas_cliente['CONTRATO'].dropna().astype(str).tolist()
+            else:
+                contratos_disponibles[cedula] = []
+
         datos_excel = []
         barra_progreso = st.progress(0)
-        
-        for i, archivo in enumerate(archivos_subidos):
-            # 1. Extraer Cédula y Mes del nombre del archivo
-            nombre_limpio = archivo.name.split('.')[0]
-            partes = nombre_limpio.split('-')
+        texto_progreso = st.empty()
+
+        # 3. Bucle de Procesamiento
+        for i, archivo in enumerate(archivos_soportes):
+            texto_progreso.markdown(f"<p style='text-align:center'>Procesando {i+1} de {len(archivos_soportes)}: <b>{archivo.name}</b>...</p>", unsafe_allow_html=True)
             
-            cedula = partes[0].strip() if len(partes) > 0 else "Revisar"
-            mes_pago = partes[2].replace("PAGO MES ", "").strip().capitalize() if len(partes) > 2 else "Revisar"
+            # A. Extracción del nombre del archivo (Estructura: Cédula-Nombre-Mes)
+            partes = archivo.name.split('-')
+            cedula = partes[0].strip() if len(partes) > 0 else "Sin Cedula"
             nombre_cliente = partes[1].strip() if len(partes) > 1 else archivo.name
             
-            # 2. Extraer Valor usando OCR
-            valor_pagado = extraer_valor_con_ocr(archivo.getvalue())
-            
-            # 3. Lógica de Contratos en baseDeDatos
-            # Filtramos la BD para ver cuántos contratos tiene esta cédula
-            contratos_cliente = df_bd[df_bd['CODIGO'].astype(str).str.contains(cedula)]
-            
-            nota_contrato = ""
-            if len(contratos_cliente) > 1:
-                # Si tiene más de 1 contrato, buscamos cuál coincide con el valor del OCR
-                match = contratos_cliente[contratos_cliente['VALOR_CONTRATO'] == valor_pagado]
-                if not match.empty:
-                    nota_contrato = f"Asignado automático: {valor_pagado}"
-                else:
-                    nota_contrato = f"Revisar: {len(contratos_cliente)} contratos. Valor OCR no coincide."
-            else:
-                nota_contrato = "Único contrato"
+            mes_pago = "Revisar"
+            if len(partes) > 2:
+                texto_mes = partes[2].upper().replace("PAGO MES ", "").split('.')[0].strip()
+                mes_pago = texto_mes.capitalize()
 
-            # 4. Subir imagen a Cloudinary
-            try:
-                respuesta = cloudinary.uploader.upload(archivo.getvalue(), folder="Soportes_Masivos")
-                url_soporte = respuesta.get("secure_url")
-            except Exception as e:
-                url_soporte = "Error al subir"
-                
-            # 5. Estructurar Fila para el Excel
+            # B. Ejecutar OCR para sacar Valor y Referencia
+            valor_ocr, ref_ocr = ejecutar_lector_optico(archivo)
+
+            # C. Lógica de asignación de Contratos
+            contrato_asignado = "Sin contrato en BD"
+            lista_contratos_cliente = contratos_disponibles.get(cedula, [])
+            
+            if len(lista_contratos_cliente) == 1:
+                contrato_asignado = lista_contratos_cliente[0]
+            elif len(lista_contratos_cliente) > 1:
+                # Cruce lógico: Si la cantidad de imágenes subidas es igual a la cantidad de contratos, asigna uno a uno
+                if conteo_archivos.get(cedula, 0) == len(lista_contratos_cliente):
+                    contrato_asignado = lista_contratos_cliente.pop(0) 
+                else:
+                    contrato_asignado = f"Revisar Múltiples ({', '.join(lista_contratos_cliente)})"
+
+            # D. Subir a Cloudinary usando el preset
+            url_soporte = subir_a_cloudinary(archivo)
+
+            # E. Armar la fila idéntica a Google Sheets
+            timestamp_actual = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            ref_sistema = f"Masivo_{datetime.now().strftime('%Y%m%d%H%M%S')}_{i}"
+            
             fila = {
-                "Timestamp": datetime.datetime.now().strftime("%m/%d/%Y %H:%M:%S"),
+                "Timestamp": timestamp_actual,
                 "Cedula": cedula,
                 "NombreCliente": nombre_cliente,
-                "Contrato": nota_contrato,
-                "ValorPagado": valor_pagado,
-                "FechaPago": "", # Puede extraerse con OCR también si lo deseas
+                "Contrato": contrato_asignado,
+                "ValorPagado": valor_ocr if valor_ocr > 0 else "",
+                "FechaPago": timestamp_actual.split(" ")[0],
                 "MesPago": mes_pago,
                 "Estado": "Verificado (Cargue Masivo)",
                 "Soporte de pago": url_soporte,
-                "Referencia de Pago": "Lectura OCR",
-                "Referencia del Sistema": "Masivo_" + datetime.datetime.now().strftime("%Y%m%d%H%M%S"),
+                "Referencia de Pago": ref_ocr,
+                "Referencia del Sistema": ref_sistema,
                 "Banco": "Pendiente Banco"
             }
             datos_excel.append(fila)
             
-            # Actualizar progreso
-            barra_progreso.progress((i + 1) / len(archivos_subidos))
+            barra_progreso.progress((i + 1) / len(archivos_soportes))
+
+        texto_progreso.markdown("<p style='text-align:center; color:#00a896; font-weight:bold;'>✅ Procesamiento Óptico y Subida Completados.</p>", unsafe_allow_html=True)
         
-        st.success("✅ Procesamiento completado.")
-        
-        # --- 4. GENERACIÓN DEL EXCEL ---
+        # 4. Generación de Excel en memoria
         df_resultado = pd.DataFrame(datos_excel)
         
-        # Mostrar vista previa en la Web App
-        st.dataframe(df_resultado)
+        st.markdown("<br><h3 style='text-align:left !important;'>Vista Previa del Consolidado</h3>", unsafe_allow_html=True)
+        st.dataframe(df_resultado, use_container_width=True)
         
-        # Convertir DataFrame a Excel en memoria (BytesIO) para el botón de descarga
-        output = BytesIO()
+        output = io.BytesIO()
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
             df_resultado.to_excel(writer, index=False, sheet_name='RegistroPagos')
-        datos_procesados = output.getvalue()
         
         st.download_button(
-            label="⬇️ Descargar Archivo Excel",
-            data=datos_procesados,
-            file_name=f"Cargue_SenalMas_{datetime.datetime.now().strftime('%d%m%Y')}.xlsx",
+            label="⬇️ Descargar Excel para Google Sheets",
+            data=output.getvalue(),
+            file_name=f"Cargue_Masivo_{datetime.now().strftime('%d%m%Y')}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            type="primary"
+            use_container_width=True
         )
+
+st.markdown("---")
+st.markdown('<p style="color: #b0c4de; text-align: center; font-size: 0.9rem;">Señal Más | Innovación y Conectividad | Automatización Masiva</p>', unsafe_allow_html=True)
