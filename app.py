@@ -60,7 +60,7 @@ if logo_completo is not None:
     with col_logo:
         st.image(logo_completo, width=60)
     with col_titulo:
-        st.markdown("<h1 style='text-align: left !important; margin-top: -10px;'>Portal de Cargue Masivo</h1>", unsafe_allow_html=True)
+        st.markdown("<h1 style='text-align: left !important; margin-top: -10px;'>🪄 Portal de Cargue Masivo</h1>", unsafe_allow_html=True)
 else:
     st.markdown("<h1 style='text-align: center !important;'>🪄 Portal de Cargue Masivo</h1>", unsafe_allow_html=True)
 
@@ -89,17 +89,16 @@ def ejecutar_lector_optico(archivo):
             for page in reader.pages: texto_completo += page.extract_text() or ""
         except Exception: pass
             
-    # 2. Si está vacío (es JPG, JPEG, PNG o falló el PDF), usar OCR.space
+    # 2. Si está vacío, usar OCR.space
     if not texto_completo.strip():
         try:
             url_ocr = "https://api.ocr.space/parse/image"
-            # PARÁMETROS MEJORADOS PARA JPEG Y RECIBOS
             payload = {
                 "apikey": OCR_SPACE_API_KEY, 
                 "language": "spa", 
                 "isOverlayRequired": False,
-                "OCREngine": "2",  # Motor 2: Especializado en números y recibos
-                "scale": "true"    # Escala y mejora la calidad antes de leer
+                "OCREngine": "2",  
+                "scale": "true"    
             }
             files = {"file": (archivo.name, archivo.getvalue(), archivo.type)}
             res = requests.post(url_ocr, data=payload, files=files, timeout=20)
@@ -136,7 +135,6 @@ def ejecutar_lector_optico(archivo):
                         valor_detectado = v
                         break
         
-        # Red de seguridad: buscar cualquier número cerrado (ej. 85000) suelto
         if valor_detectado == 0:
             posibles_numeros = re.findall(r'\b\d{2,3}[\.,]?\d{3}\b', texto_clean)
             for pv in posibles_numeros:
@@ -147,18 +145,25 @@ def ejecutar_lector_optico(archivo):
                         valor_detectado = v
                         break 
 
-        # --- EXTRACCIÓN DE REFERENCIA ---
-        match_ref = re.search(r'n[uú]mero de (?:referencia|comprobante)\s*([a-z0-9]{5,20})', texto_clean)
-        if match_ref:
-            ref_detectada = match_ref.group(1).upper()
-        else:
-            match_otras = re.search(r'(?:referencia|ref\.|aprobaci[óo]n|autorizaci[óo]n|comprobante).{0,15}?([a-z0-9]{5,20})', texto_clean)
-            if match_otras and match_otras.group(1) not in ["movimiento", "transferencia", "bancolombia"]:
-                 ref_detectada = match_otras.group(1).upper()
-            else:
-                 match_nequi = re.search(r'\b(m\d{5,10})\b', texto_clean)
-                 if match_nequi:
-                     ref_detectada = match_nequi.group(1).upper()
+        # --- EXTRACCIÓN DE REFERENCIA (SISTEMA DE 4 NIVELES) ---
+        patrones_ref = [
+            r'movimiento\s*[:\-\s]*([a-z0-9]{6,20})', # 1. Especial para Nequi
+            r'(?:referencia|comprobante|aprobaci[óo]n|autorizaci[óo]n|transacci[óo]n|recibo)\s*[:\-\s]*(?:n[oó]?|num)?\s*([a-z0-9]{5,20})', # 2. Palabras clave típicas
+            r'\b(m\d{6,15})\b', # 3. Patrón clásico de Nequi "M" + números suelto
+            r'\b(\d{9,15})\b'   # 4. Número largo suelto (común en Bancolombia)
+        ]
+        
+        for patron in patrones_ref:
+            match = re.search(patron, texto_clean)
+            if match:
+                posible_ref = match.group(1).upper()
+                # Excluir falsos positivos (palabras que el OCR lee como códigos)
+                if not posible_ref.isalpha() and posible_ref not in ["BANCOLOMBIA", "TRANSFERENCIA", "MOVIMIENTO"]:
+                    # Evitar que capture una fecha que parezca referencia (ej. 20260527)
+                    if posible_ref.isdigit() and len(posible_ref) == 8 and posible_ref.startswith("202"):
+                        continue
+                    ref_detectada = posible_ref
+                    break # Si encuentra una buena, se detiene
                      
     return valor_detectado, ref_detectada
 
