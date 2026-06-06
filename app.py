@@ -3,39 +3,48 @@ import pandas as pd
 import requests
 import re
 import io
+import os
 import time
 from datetime import datetime
+from PIL import Image
 
 # --- CONFIGURACIÓN DE APIS ---
 CLOUDINARY_CLOUD_NAME = "dgdtwbmot"
 CLOUDINARY_PRESET = "conexion_pagos_preset1"
 OCR_SPACE_API_KEY = "helloworld" 
 
-# --- INICIALIZACIÓN Y ESTILOS ---
-st.set_page_config(page_title="Señal Más | Cargue Masivo", page_icon="🪄", layout="wide")
+# --- CARGAR IMÁGENES (LOGO E ÍCONO) ---
+# IMPORTANTE: Revisa que estos nombres sean EXACTAMENTE iguales a los de tus archivos.
+ruta_logo = 'logoSenalMas.jpeg'
+ruta_icono = 'logoSenalMas.ico'
 
-st.markdown("""
-    <style>
-        #MainMenu {visibility: hidden;} footer {visibility: hidden;} header {visibility: hidden;}
-        .stAppDeployButton {display:none;} div[data-testid="stToolbar"] { visibility: hidden !important; }
-        .main { background-color: #00233c; } .block-container { padding-top: 1.5rem; padding-bottom: 2rem; }
-        h1, h3 { text-align: center !important; }
-        h1 { color: #ffffff; font-size: 2.2rem; margin-top: 0; font-weight: 700; }
-        h3 { color: #b0c4de; font-size: 1.1rem; font-weight: 400; margin-bottom: 2.5rem; }
-        p, .stMarkdown p { color: #ffffff; }
-        .stTextInput > div > div > input { background-color: #ffffff; color: #00233c; border-radius: 8px; border: 2px solid #00a896; }
-        div[data-testid="stFormSubmitButton"] button, .stButton button {
-            background-color: #00a896 !important; color: #ffffff !important; border-radius: 8px !important;
-            font-weight: 700 !important; border: none !important; box-shadow: 0 4px 10px rgba(0,168,150,0.3) !important;
-        }
-        .stButton button:hover { background-color: #02c3b1 !important; box-shadow: 0 6px 15px rgba(2,195,177,0.5) !important; }
-        .stDataFrame {background-color: white;}
-    </style>
-    """, unsafe_allow_html=True)
+try:
+    if os.path.exists(ruta_logo):
+        logo_completo = Image.open(ruta_logo)
+    else:
+        logo_completo = None
+        
+    if os.path.exists(ruta_icono):
+        isotipo = Image.open(ruta_icono)
+    else:
+        isotipo = "🪄"
+except Exception:
+    logo_completo = None
+    isotipo = "🪄"
+
+# --- INICIALIZACIÓN Y ESTILOS ---
+st.set_page_config(page_title="Señal Más | Cargue Masivo", page_icon=isotipo, layout="wide")
+
+# ... (Aquí van tus estilos CSS) ...
+
+# --- MOSTRAR EL LOGO EN LA PÁGINA ---
+if logo_completo is not None:
+    col_logo1, col_logo2, col_logo3 = st.columns([1, 2, 1])
+    with col_logo2:
+        st.image(logo_completo, use_column_width=True)
 
 st.title("🪄 Portal de Cargue Masivo")
 st.subheader("Análisis óptico, validación de contratos y consolidación de reportes")
-
 # --- FUNCIONES NÚCLEO (Las tuyas, adaptadas para el bucle) ---
 
 def subir_a_cloudinary(archivo_subido):
